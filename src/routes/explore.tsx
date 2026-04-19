@@ -246,7 +246,7 @@ function RouteComponent() {
             <div className="flex w-full items-center justify-between gap-4">
               <button
                 onClick={() => navigate({ to: '/' })}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/70 text-neutral-300 transition hover:border-neutral-600 hover:bg-neutral-800 hover:text-white"
+                className="hidden h-10 w-10 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/70 text-neutral-300 transition hover:border-neutral-600 hover:bg-neutral-800 hover:text-white sm:inline-flex"
                 aria-label="Back to home"
               >
                 <IconArrowLeft size={18} />

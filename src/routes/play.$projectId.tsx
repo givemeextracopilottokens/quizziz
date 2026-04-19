@@ -1,5 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { motion } from 'motion/react';
+import z from 'zod';
 import {
   IconRocket,
   IconFlame,
@@ -30,7 +32,27 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 
+const SearchParams = z.object({
+  randomizeAnswers: z
+    .preprocess(
+      value =>
+        value === 'true' || value === '1' || value === true || value === 'yes',
+      z.boolean(),
+    )
+    .default(true)
+    .catch(true),
+  randomizeQuestions: z
+    .preprocess(
+      value =>
+        value === 'true' || value === '1' || value === true || value === 'yes',
+      z.boolean(),
+    )
+    .default(true)
+    .catch(true),
+});
+
 export const Route = createFileRoute('/play/$projectId')({
+  validateSearch: SearchParams,
   component: RouteComponent,
 });
 
@@ -74,6 +96,8 @@ type QuizState = 'loading' | 'start' | 'playing' | 'answering' | 'results';
 function RouteComponent() {
   const { projectId } = Route.useParams();
   const navigate = useNavigate();
+  const search = Route.useSearch();
+
   const [quizState, setQuizState] = useState<QuizState>('loading');
   const [quizData, setQuizData] = useState<QuizData | null>(null);
   const [originalQuizData, setOriginalQuizData] = useState<QuizData | null>(
@@ -83,12 +107,63 @@ function RouteComponent() {
   const [userAnswers, setUserAnswers] = useState<UserAnswer[]>([]);
   const [score, setScore] = useState(0);
   const [timeLeft, setTimeLeft] = useState(0);
-  const [maxTime, setMaxTime] = useState(0);
   const [attempts, setAttempts] = useState<QuizAttempt[]>([]);
   const [questionStartTime, setQuestionStartTime] = useState(0);
-  const [randomizeAnswers, setRandomizeAnswers] = useState(false);
-  const [randomizeQuestions, setRandomizeQuestions] = useState(false);
+  const [currentSelectedAnswers, setCurrentSelectedAnswers] = useState<
+    number[]
+  >([]);
+  const [currentTextAnswer, setCurrentTextAnswer] = useState('');
+  const currentSelectedAnswersRef = useRef<number[]>([]);
+  const currentTextAnswerRef = useRef('');
+  const updateCurrentSelectedAnswers = useCallback((answers: number[]) => {
+    currentSelectedAnswersRef.current = answers;
+    setCurrentSelectedAnswers(answers);
+  }, []);
+  const updateCurrentTextAnswer = useCallback((value: string) => {
+    currentTextAnswerRef.current = value;
+    setCurrentTextAnswer(value);
+  }, []);
+  const [randomizeAnswers, setRandomizeAnswers] = useState(
+    search.randomizeAnswers ?? true,
+  );
+  const [randomizeQuestions, setRandomizeQuestions] = useState(
+    search.randomizeQuestions ?? true,
+  );
   const timeRef = useRef<number>(null);
+
+  // Sync toggle state with search params
+  const updateSearch = useCallback(
+    (params: Partial<z.infer<typeof SearchParams>>) => {
+      navigate({
+        to: '/play/$projectId',
+        params: { projectId },
+        search: prev => ({
+          ...prev,
+          ...params,
+        }),
+      });
+    },
+    [navigate, projectId],
+  );
+
+  useEffect(() => {
+    setRandomizeAnswers(search.randomizeAnswers ?? true);
+    setRandomizeQuestions(search.randomizeQuestions ?? true);
+  }, [search.randomizeAnswers, search.randomizeQuestions]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const hasRandomizeAnswers = params.has('randomizeAnswers');
+    const hasRandomizeQuestions = params.has('randomizeQuestions');
+
+    if (!hasRandomizeAnswers || !hasRandomizeQuestions) {
+      updateSearch({
+        randomizeAnswers,
+        randomizeQuestions,
+      });
+    }
+  }, [randomizeAnswers, randomizeQuestions, updateSearch]);
 
   // Load quiz data
   useEffect(() => {
@@ -105,38 +180,6 @@ function RouteComponent() {
     };
     loadData();
   }, [projectId]);
-
-  // Timer effect with smooth animation
-  useEffect(() => {
-    if (quizState !== 'playing' || !quizData) return;
-
-    const question = quizData.questions[currentQuestionIndex];
-    if (!question || question.allowedTime === 0) return;
-
-    let startTime = Date.now();
-    const initialTimeLeft = maxTime; // Use maxTime from question start
-
-    const animateTimer = () => {
-      const elapsed = (Date.now() - startTime) / 1000;
-      const remaining = Math.max(0, initialTimeLeft - elapsed);
-
-      setTimeLeft(remaining);
-
-      if (remaining <= 0) {
-        handleTimeUp();
-        return;
-      }
-
-      timeRef.current = requestAnimationFrame(animateTimer);
-    };
-
-    timeRef.current = requestAnimationFrame(animateTimer);
-    return () => {
-      if (timeRef.current) {
-        cancelAnimationFrame(timeRef.current);
-      }
-    };
-  }, [quizState, currentQuestionIndex, quizData, maxTime]);
 
   const handleStartQuiz = useCallback(() => {
     if (!originalQuizData) return;
@@ -161,30 +204,18 @@ function RouteComponent() {
 
     const question = newQuizData.questions[0];
     const timeLimit = question.allowedTime > 0 ? question.allowedTime : 0;
-    setMaxTime(timeLimit);
     setTimeLeft(timeLimit);
+    updateCurrentSelectedAnswers([]);
+    updateCurrentTextAnswer('');
     setQuestionStartTime(Date.now());
     setQuizState('playing');
-  }, [originalQuizData, randomizeAnswers, randomizeQuestions]);
-
-  const handleTimeUp = useCallback(() => {
-    // Submit empty answer as incorrect
-    if (!quizData) return;
-
-    setUserAnswers(prev => [
-      ...prev,
-      {
-        questionIndex: currentQuestionIndex,
-        selectedAnswers: [],
-        textAnswer: '',
-        submittedAt: 0, // 0 points for timeout
-        userProvidedAnswer: 'No answer (time expired)',
-      },
-    ]);
-
-    setScore(prev => prev + 0); // No points for timeout
-    setQuizState('answering');
-  }, [currentQuestionIndex, quizData]);
+  }, [
+    originalQuizData,
+    randomizeAnswers,
+    randomizeQuestions,
+    updateCurrentSelectedAnswers,
+    updateCurrentTextAnswer,
+  ]);
 
   const calculatePoints = (
     isCorrect: boolean,
@@ -201,15 +232,12 @@ function RouteComponent() {
       return basePoints;
     }
 
-    // Time remaining
     const timeRemaining = allowedTime - timeTaken;
 
-    // If submitted within 3 seconds, max points
     if (timeRemaining >= allowedTime - bonusWindow) {
       return basePoints;
     }
 
-    // Proportional points based on time remaining
     const ratio = Math.max(0, timeRemaining) / allowedTime;
     return Math.round(basePoints * ratio);
   };
@@ -221,7 +249,6 @@ function RouteComponent() {
       const question = quizData.questions[currentQuestionIndex];
       const timeTaken = (Date.now() - questionStartTime) / 1000;
 
-      // Determine if answer is correct
       let isCorrect = false;
       if (question.type === 'input') {
         isCorrect =
@@ -236,7 +263,6 @@ function RouteComponent() {
           selectedAnswers.every(i => correctIndices.includes(i));
       }
 
-      // Calculate points
       const earnedPoints = calculatePoints(
         isCorrect,
         timeTaken,
@@ -265,6 +291,47 @@ function RouteComponent() {
     [currentQuestionIndex, quizData, questionStartTime],
   );
 
+  const handleTimeUp = useCallback(() => {
+    if (!quizData) return;
+
+    handleSubmitAnswer(
+      currentSelectedAnswersRef.current,
+      currentTextAnswerRef.current,
+    );
+  }, [quizData, handleSubmitAnswer]);
+
+  useEffect(() => {
+    if (quizState !== 'playing' || !quizData) return;
+
+    const question = quizData.questions[currentQuestionIndex];
+    if (!question || question.allowedTime === 0) return;
+
+    let startTime = Date.now();
+    const initialTimeLeft = question.allowedTime;
+
+    const animateTimer = () => {
+      const elapsed = (Date.now() - startTime) / 1000;
+      const remaining = Math.max(0, initialTimeLeft - elapsed);
+
+      setTimeLeft(remaining);
+
+      if (remaining <= 0) {
+        setTimeLeft(0);
+        handleTimeUp();
+        return;
+      }
+
+      timeRef.current = requestAnimationFrame(animateTimer);
+    };
+
+    timeRef.current = requestAnimationFrame(animateTimer);
+    return () => {
+      if (timeRef.current) {
+        cancelAnimationFrame(timeRef.current);
+      }
+    };
+  }, [quizState, currentQuestionIndex, quizData, handleTimeUp]);
+
   const handleNextQuestion = useCallback(() => {
     if (!quizData) return;
 
@@ -273,8 +340,9 @@ function RouteComponent() {
       const question = quizData.questions[nextIndex];
       setCurrentQuestionIndex(nextIndex);
       const timeLimit = question.allowedTime > 0 ? question.allowedTime : 0;
-      setMaxTime(timeLimit);
       setTimeLeft(timeLimit);
+      updateCurrentSelectedAnswers([]);
+      updateCurrentTextAnswer('');
       setQuestionStartTime(Date.now());
       setQuizState('playing');
     } else {
@@ -374,8 +442,8 @@ function RouteComponent() {
         <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 sm:py-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <button
-              onClick={() => navigate({ to: '/' })}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/70 text-neutral-300 transition hover:border-neutral-600 hover:bg-neutral-800 hover:text-white"
+              onClick={() => navigate({ to: '/explore' })}
+              className="hidden h-10 w-10 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/70 text-neutral-300 transition hover:border-neutral-600 hover:bg-neutral-800 hover:text-white sm:inline-flex"
               aria-label="Back to home"
             >
               <IconArrowLeft size={18} />
@@ -405,8 +473,14 @@ function RouteComponent() {
             totalQuestions={quizData?.questions.length || 0}
             randomizeAnswers={randomizeAnswers}
             randomizeQuestions={randomizeQuestions}
-            onRandomizeAnswersChange={setRandomizeAnswers}
-            onRandomizeQuestionsChange={setRandomizeQuestions}
+            onRandomizeAnswersChange={value => {
+              setRandomizeAnswers(value);
+              updateSearch({ randomizeAnswers: value });
+            }}
+            onRandomizeQuestionsChange={value => {
+              setRandomizeQuestions(value);
+              updateSearch({ randomizeQuestions: value });
+            }}
             onStart={handleStartQuiz}
           />
         )}
@@ -417,6 +491,10 @@ function RouteComponent() {
             questionIndex={currentQuestionIndex}
             totalQuestions={quizData?.questions.length || 0}
             timeLeft={timeLeft}
+            selectedAnswers={currentSelectedAnswers}
+            textAnswer={currentTextAnswer}
+            onSelectedAnswersChange={updateCurrentSelectedAnswers}
+            onTextAnswerChange={updateCurrentTextAnswer}
             onSubmit={handleSubmitAnswer}
           />
         )}
@@ -629,6 +707,10 @@ interface QuestionPageProps {
   questionIndex: number;
   totalQuestions: number;
   timeLeft: number;
+  selectedAnswers: number[];
+  textAnswer: string;
+  onSelectedAnswersChange: (value: number[]) => void;
+  onTextAnswerChange: (value: string) => void;
   onSubmit: (selectedAnswers: number[], textAnswer?: string) => void;
 }
 
@@ -637,10 +719,17 @@ function QuestionPage({
   questionIndex,
   totalQuestions,
   timeLeft,
+  selectedAnswers,
+  textAnswer,
+  onSelectedAnswersChange,
+  onTextAnswerChange,
   onSubmit,
 }: QuestionPageProps) {
-  const [selectedAnswers, setSelectedAnswers] = useState<number[]>([]);
-  const [textInput, setTextInput] = useState('');
+  const [textInput, setTextInput] = useState(textAnswer);
+
+  useEffect(() => {
+    setTextInput(textAnswer);
+  }, [textAnswer]);
 
   const progressPercentage =
     question.allowedTime > 0 ? (timeLeft / question.allowedTime) * 100 : 0;
@@ -720,12 +809,11 @@ function QuestionPage({
       {question.allowedTime > 0 && (
         <div className="space-y-2">
           <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-800">
-            <div
-              className="smooth-transition h-full bg-blue-500"
-              style={{
-                width: `${progressPercentage}%`,
-                transition: 'width 0.1s linear',
-              }}
+            <motion.div
+              className="h-full bg-blue-500"
+              initial={false}
+              animate={{ width: `${progressPercentage}%` }}
+              transition={{ ease: 'linear', duration: 0.1 }}
             />
           </div>
           <p className="text-xs text-neutral-500">
@@ -762,7 +850,10 @@ function QuestionPage({
               type="text"
               placeholder="Enter your answer..."
               value={textInput}
-              onChange={e => setTextInput(e.target.value)}
+              onChange={e => {
+                setTextInput(e.target.value);
+                onTextAnswerChange(e.target.value);
+              }}
               onKeyDown={e => e.key === 'Enter' && isAnswered && handleSubmit()}
               className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-3 text-white placeholder-neutral-500 focus:border-lime-500 focus:outline-none"
               autoFocus
@@ -772,7 +863,7 @@ function QuestionPage({
               <button
                 key={idx}
                 onClick={() =>
-                  setSelectedAnswers(
+                  onSelectedAnswersChange(
                     selectedAnswers.includes(idx)
                       ? selectedAnswers.filter(i => i !== idx)
                       : [idx],
@@ -815,7 +906,7 @@ function QuestionPage({
                 <button
                   key={idx}
                   onClick={() =>
-                    setSelectedAnswers(
+                    onSelectedAnswersChange(
                       selectedAnswers.includes(idx)
                         ? selectedAnswers.filter(i => i !== idx)
                         : [...selectedAnswers, idx],
@@ -928,6 +1019,11 @@ function AnswerPage({
 
   return (
     <div className="space-y-6">
+      <div className="rounded-lg border border-neutral-700 bg-neutral-900 p-4">
+        <p className="line-clamp-2 text-sm text-neutral-400">
+          {question.title}
+        </p>
+      </div>
       {/* Result Header */}
       <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-6 text-center">
         <div className="mb-3 flex justify-center">
@@ -1106,7 +1202,7 @@ function ResultsPage({
                   key={idx}
                   className="rounded-lg border border-red-700/30 bg-red-950/20 p-4"
                 >
-                  <p className="mb-3 text-sm font-medium text-red-300">
+                  <p className="mb-3 line-clamp-2 max-w-full overflow-hidden text-sm font-medium wrap-break-word text-red-300">
                     Question {answer.questionIndex + 1}: {question.title}
                   </p>
 
