@@ -30,7 +30,7 @@ function RouteComponent() {
         className="pointer-events-none absolute inset-x-0 top-0 overflow-hidden"
         style={{
           height: '70vh',
-          background: `linear-gradient(180deg, rgba(30, 80, 50, 1) 0%, rgba(50, 120, 80, 0.8) 20%, rgba(80, 160, 100, 0.6) 40%, rgba(100, 200, 130, 0.5) 60%, rgba(70, 150, 90, 0.4) 80%, rgba(10, 10, 10, 1) 100%)`,
+          background: `linear-gradient(180deg, rgba(8, 18, 12, 1) 0%, rgba(18, 40, 28, 0.85) 25%, rgba(30, 60, 40, 0.7) 50%, rgba(22, 45, 32, 0.55) 75%, rgba(8, 10, 10, 1) 100%)`,
         }}
       />
       <div

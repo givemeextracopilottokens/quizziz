@@ -4,7 +4,6 @@ import { z } from 'zod';
 
 import { db } from '~/db';
 import { projects, questions, answers } from '~/db/schema/app';
-import { getSession } from '~/lib/auth-functions';
 
 interface Answer {
   text: string;
@@ -24,18 +23,8 @@ export const loadQuiz = createServerFn({ method: 'GET' })
   .inputValidator(z.object({ projectId: z.string() }))
   .handler(async ({ data }) => {
     try {
-      const session = await getSession();
-      const userId = session?.user.id;
-
-      if (!userId) {
-        return { success: false, error: 'Unauthorized' };
-      }
-
       const project = await db.query.projects.findFirst({
-        where: and(
-          eq(projects.id, data.projectId),
-          eq(projects.userId, userId),
-        ),
+        where: and(eq(projects.id, data.projectId)),
       });
 
       if (!project) {
